@@ -1,0 +1,127 @@
+from flask import Flask, request, jsonify, render_template_string
+import sqlite3
+import pandas as pd
+from io import StringIO
+
+app = Flask(__name__)
+
+# Sample drug data (CSV format)
+SAMPLE_DRUGS = """
+name,uses,side_effects,dosage
+Ibuprofen,"Pain relief","Nausea, dizziness","200-400mg"
+Aspirin,"Pain, heart health","Bleeding, upset stomach","75-325mg"
+Paracetamol,"Pain, fever","Liver damage (overdose)","500-1000mg"
+"""
+
+# Initialize database
+def init_db():
+    conn = sqlite3.connect('drugs.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS drugs (
+            id INTEGER PRIMARY KEY,
+            name TEXT,
+            uses TEXT,
+            side_effects TEXT,
+            dosage TEXT
+        )
+    ''')
+    
+    # Load sample data if empty
+    cursor.execute("SELECT COUNT(*) FROM drugs")
+    if cursor.fetchone()[0] == 0:
+        df = pd.read_csv(StringIO(SAMPLE_DRUGS))
+        df.to_sql('drugs', conn, if_exists='append', index=False)
+    
+    conn.commit()
+    conn.close()
+
+# HTML/CSS/JS Frontend
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Drug Search</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .search-box {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        #searchInput {
+            flex: 1;
+            padding: 10px;
+            font-size: 16px;
+        }
+        button {
+            padding: 10px 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        .drug-card {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Drug Database Search</h1>
+    <div class="search-box">
+        <input type="text" id="searchInput" placeholder="Search drugs...">
+        <button onclick="searchDrugs()">Search</button>
+    </div>
+    <div id="results"></div>
+
+    <script>
+        async function searchDrugs() {
+            const query = document.getElementById('searchInput').value;
+            const response = await fetch('/search?q=' + encodeURIComponent(query));
+            const drugs = await response.json();
+            
+            const resultsDiv = document.getElementById('results');
+            if (drugs.length === 0) {
+                resultsDiv.innerHTML = '<p>No drugs found.</p>';
+                return;
+            }
+            
+            resultsDiv.innerHTML = drugs.map(drug => `
+                <div class="drug-card">
+                    <h3>${drug[1]}</h3>
+                    <p><strong>Uses:</strong> ${drug[2]}</p>
+                    <p><strong>Side Effects:</strong> ${drug[3]}</p>
+                    <p><strong>Dosage:</strong> ${drug[4]}</p>
+                </div>
+            `).join('');
+        }
+    </script>
+</body>
+</html>
+"""
+
+# Routes
+@app.route('/')
+def home():
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/search')
+def search():
+    query = request.args.get('q', '').lower()
+    conn = sqlite3.connect('drugs.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM drugs WHERE LOWER(name) LIKE ?", (f'%{query}%',))
+    results = cursor.fetchall()
+    conn.close()
+    return jsonify(results)
+
+if __name__ == '__main__':
+    init_db()
+    app.run(debug=True, port=5000)
